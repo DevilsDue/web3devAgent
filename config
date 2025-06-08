@@ -1,0 +1,157 @@
+// Initialize constants for network configurations and operation types
+const NETWORKS = {
+  ethereum: {
+    name: "Ethereum Mainnet",
+    chainId: 1,
+    currency: "ETH",
+    rpcUrl: (key, service) => service === 'infura' ? 
+      `https://mainnet.infura.io/v3/${key}` : 
+      `https://eth-mainnet.g.alchemy.com/v2/${key}`
+  },
+  polygon: {
+    name: "Polygon Mainnet",
+    chainId: 137,
+    currency: "MATIC",
+    rpcUrl: (key, service) => service === 'infura' ? 
+      `https://polygon-mainnet.infura.io/v3/${key}` : 
+      `https://polygon-mainnet.g.alchemy.com/v2/${key}`
+  },
+  goerli: {
+    name: "Ethereum Goerli",
+    chainId: 5,
+    currency: "ETH",
+    rpcUrl: (key, service) => service === 'infura' ? 
+      `https://goerli.infura.io/v3/${key}` : 
+      `https://eth-goerli.g.alchemy.com/v2/${key}`
+  },
+  mumbai: {
+    name: "Polygon Mumbai",
+    chainId: 80001,
+    currency: "MATIC",
+    rpcUrl: (key, service) => service === 'infura' ? 
+      `https://polygon-mumbai.infura.io/v3/${key}` : 
+      `https://polygon-mumbai.g.alchemy.com/v2/${key}`
+  }
+};
+
+// Validate configuration and initialize Web3
+const validateConfig = () => {
+  if (!ai.config.apiKey) throw new Error("API key is required");
+  if (!ai.config.network) throw new Error("Network selection is required");
+  if (!ai.config.request) throw new Error("Operation request is required");
+  
+  const network = NETWORKS[ai.config.network];
+  if (!network) throw new Error("Invalid network selected");
+  
+  return network;
+};
+
+// Parse the natural language request
+const parseRequest = (request) => {
+  const lowerRequest = request.toLowerCase();
+  
+  if (lowerRequest.includes('balance')) {
+    return {
+      type: 'BALANCE_CHECK',
+      address: ai.config.walletAddress
+    };
+  }
+  
+  throw new Error("Unsupported operation requested. Currently supporting: balance checks");
+};
+
+// Initialize Web3 instance
+const initializeWeb3 = (network) => {
+  const rpcUrl = ai.config.rpcUrl || network.rpcUrl(ai.config.apiKey, ai.config.providerService);
+  return new Web3(new Web3.providers.HttpProvider(rpcUrl));
+};
+
+// Main execution
+try {
+  console.log("Initializing Web3 Development Assistant...");
+  
+  // Validate configuration
+  const network = validateConfig();
+  
+  // Parse the request
+  const operation = parseRequest(ai.config.request);
+  
+  // Initialize Web3
+  const web3 = initializeWeb3(network);
+  
+  let result = {
+    success: false,
+    operation: operation.type,
+    code: "",
+    explanation: "",
+    result: null,
+    nextSteps: []
+  };
+  
+  // Execute operation
+  if (operation.type === 'BALANCE_CHECK') {
+    if (!web3.utils.isAddress(operation.address)) {
+      throw new Error("Invalid Ethereum address provided");
+    }
+    
+    const code = `const balance = await web3.eth.getBalance('${operation.address}');
+const ${network.currency.toLowerCase()}Balance = web3.utils.fromWei(balance, 'ether');`;
+    
+    // Execute the code
+    const balance = await web3.eth.getBalance(operation.address);
+    const formattedBalance = web3.utils.fromWei(balance, 'ether');
+    
+    result = {
+      success: true,
+      operation: "BALANCE_CHECK",
+      code: code,
+      explanation: `This code retrieves the ${network.currency} balance of the wallet address using web3.eth.getBalance() and converts it from Wei (the smallest unit) to ${network.currency} using web3.utils.fromWei().`,
+      result: {
+        address: operation.address,
+        balance: formattedBalance,
+        currency: network.currency
+      },
+      nextSteps: [
+        "To track changes, store this balance and compare it in future checks",
+        "Consider checking token balances if this wallet holds ERC20 tokens"
+      ]
+    };
+  }
+  
+  // Store successful code if requested
+  if (ai.config.storeCode === "true" && result.success) {
+    if (!ai.vars.global.storedCode) {
+      ai.vars.global.storedCode = {};
+    }
+    
+    const snippetId = `${operation.type.toLowerCase()}_${Date.now()}`;
+    ai.vars.global.storedCode[snippetId] = {
+      code: result.code,
+      timestamp: new Date().toISOString(),
+      network: ai.config.network
+    };
+  }
+  
+  // Set output variable
+  ai.vars[ai.config.outputVar] = 
+    ai.config.outputFormat === "simple" ? 
+      result.result : 
+      result;
+  
+  console.log("Operation completed successfully");
+
+} catch (error) {
+  console.error("Operation failed:", error.message);
+  
+  // Set error result
+  ai.vars[ai.config.outputVar] = {
+    success: false,
+    error: error.message,
+    explanation: "The operation failed. Please check the error message and ensure all inputs are correct.",
+    nextSteps: [
+      "Verify the wallet address is correct",
+      "Ensure your API key is valid",
+      "Check your network connection"
+    ]
+  };
+}
